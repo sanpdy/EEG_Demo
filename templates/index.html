@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Recording Interface</title>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #000000;
+        }
+        .container {
+            text-align: center;
+        }
+        .button {
+            display: inline-block;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            text-align: center;
+            text-decoration: none;
+            outline: none;
+            border: none;
+            border-radius: 15px;
+            margin: 10px;
+        }
+        .green {
+            background-color: #34b439;
+            color: #f5f5f5;
+            opacity: 0.7;
+            transition: 0.3s;
+        }
+        .green:hover {
+            opacity: 1
+        }
+        .green:active {
+            background-color: #96db98;
+            transform: translateY(4px);
+        }
+        .red {
+            background-color: #fc483b;
+            color: #f5f5f5;
+        }
+        .red:hover {
+            background-color: #fc7970;
+        }
+        .red:active {
+            background-color: #fc7970;
+            transform: translateY(4px);
+        }
+        .grey {
+            background-color: #9e9e9ec0;
+            color: #f5f5f5;
+        }
+        .grey:hover {
+            background-color: #aaaaaa;
+        }
+        .grey:active {
+            background-color: #aaaaaa;
+            transform: translateY(4px);
+        }
+        button:disabled {
+            opacity: 0.4;
+        }
+        #statusMessage {
+            font-size: 24px;
+            color: #f5f5f5;
+            margin-top: 20px;
+        }
+        #instruction {
+            font-size: 24px;
+            color: #f5f5f5;
+            margin-top: 20px;
+        }
+
+        #resultDisplay{
+            color: #f5f5f5;
+        }
+    </style>
+</head>
+<body>
+    <div class="container" id="recordingScreen">
+        <button id="startButton" class="button green" onclick="startRecording()">
+            Start Recording
+        </button>
+        <p id="statusMessage"></p>
+    </div>
+    
+    <div class="container" id="resultsScreen" style="display:none;">
+        <h1 id="resultDisplay">Predicted Digit: _</h1>
+        <button id="retryButton" class="button grey" onclick="retry()">Try Again</button>
+    </div>    
+    <script>
+let isRecording = false;
+
+function startRecording() {
+    document.getElementById('statusMessage').textContent = 'Starting recording...';
+    document.getElementById("startButton").disabled = true; // Disable start button
+
+    fetch('/start_recording')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                console.log(data.message);
+                // Update status message with instruction
+                document.getElementById('statusMessage').textContent = 'Recording started. Imagine a number...';
+                checkRecordingStatus();
+            } else {
+                console.error(data.message);
+                // Proceed to inference even if the headset isn't found
+                document.getElementById('statusMessage').textContent = 'Error starting recording. Proceeding to inference...';
+                checkRecordingStatus();
+            }
+        })
+        .catch(() => {
+            // Proceed to inference even if there's an error
+            document.getElementById('statusMessage').textContent = 'Error starting recording. Proceeding to inference...';
+            checkRecordingStatus();
+        });
+}
+
+function checkRecordingStatus() {
+    fetch('/recording_status')
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === "Recording") {
+                console.log(data.headset_found ? "Recording in progress" : "Searching for headset...");
+                setTimeout(checkRecordingStatus, 1000); // Check again in 1 second
+            } else {
+                console.log("Recording completed");
+                runModelInference();
+            }
+        })
+        .catch(() => {
+            // Proceed to inference even if there's an error
+            runModelInference();
+        });
+}
+
+function runModelInference() {
+    document.getElementById('statusMessage').textContent = 'Running model inference...';
+    
+    setTimeout(() => {
+        // Simulate result for now
+        displayResult("Predicted Digit: 3");
+    }, 1000); // Simulate a delay for inference
+}
+
+function displayResult(result) {
+    // Hide the recording screen and show the results screen
+    document.getElementById('recordingScreen').style.display = 'none';
+    document.getElementById('resultsScreen').style.display = 'block';
+    
+    // Display the predicted digit
+    document.getElementById('resultDisplay').textContent = result;
+}
+
+function retry() {
+    // Hide the results screen and show the recording screen
+    document.getElementById('resultsScreen').style.display = 'none';
+    document.getElementById('recordingScreen').style.display = 'block';
+    
+    // Reset status message and re-enable the start button
+    document.getElementById('statusMessage').textContent = 'Press "Start Recording" to begin.';
+    document.getElementById("startButton").disabled = false;
+}
+
+window.onload = () => {
+    document.getElementById("startButton").disabled = false;
+    document.getElementById('statusMessage').textContent = 'Press "Start Recording" to begin.';
+};
+
+    </script>
+</body>
+</html>
