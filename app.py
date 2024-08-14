@@ -6,6 +6,7 @@ from PIL import Image
 import numpy as np
 from record import Record  # Import the Record class
 import threading
+from eeg_digit import EEGDigitModel
 
 app = Flask(__name__)
 
@@ -59,7 +60,9 @@ def stop_recording():
     if record_thread and record_thread.is_alive():
         record.stop_record()
         record_thread.join()
-        return jsonify(success=True, message="Recording stopped")
+        
+        # Trigger prediction after recording is complete
+        return predict()
     else:
         return jsonify(success=False, message="No active recording to stop")
 
@@ -95,6 +98,28 @@ def current_image():
     buf.seek(0)
     current_image_name = f"image_{random_indices[current_index]}"
     return send_file(buf, mimetype='image/png')
+
+@app.route('/predict')
+def predict():
+    global current_image_name
+    # Assuming the recording is saved with the current_image_name
+    recording_path = f'C:/Sankalp/EmotivCortex/recordings/{current_image_name}.csv'
+    
+    try:
+        # Load the recorded EEG data
+        eeg_data = pd.read_csv(recording_path)
+        
+        # Extract the relevant EEG channels
+        eeg_channels = ['EEG.AF3', 'EEG.F7', 'EEG.F3', 'EEG.FC5', 'EEG.T7', 'EEG.P7', 'EEG.O1',
+                        'EEG.O2', 'EEG.P8', 'EEG.T8', 'EEG.FC6', 'EEG.F4', 'EEG.F8', 'EEG.AF4']
+        x = eeg_data[eeg_channels].values
+        
+        # Make prediction
+        prediction = eeg_model(x)
+        
+        return jsonify(success=True, prediction=int(prediction))
+    except Exception as e:
+        return jsonify(success=False, error=str(e))
 
 if __name__ == '__main__':
     app.run(debug=True)
