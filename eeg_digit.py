@@ -1,81 +1,155 @@
 import torch
 import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader, random_split
 import numpy as np
 import pandas as pd
-from scipy import signal
-import librosa
 
-class EEGCNN(nn.Module):
-    def __init__(self, input_shape, num_classes):
-        super(EEGCNN, self).__init__()
-        self.conv1 = nn.Conv2d(input_shape[0], 32, kernel_size=3, stride=1, padding=1)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1)
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.dropout = nn.Dropout(0.5)
 
-        self._to_linear = None
-        self._initialize_shape(torch.zeros(1, *input_shape))
-
-        self.fc1 = nn.Linear(self._to_linear, 128)
-        self.fc2 = nn.Linear(128, num_classes)
-
-    def _initialize_shape(self, x):
-        x = self.pool(nn.functional.relu(self.conv1(x)))
-        x = self.pool(nn.functional.relu(self.conv2(x)))
-        if self._to_linear is None:
-            self._to_linear = x[0].shape[0] * x[0].shape[1] * x[0].shape[2]
+class EEGNet(nn.Module):
+    def __init__(self, input_size, num_classes):
+        super(EEGNet, self).__init__()
+        self.fc1 = nn.Linear(input_size, 64)
+        self.fc2 = nn.Linear(64, 32)
+        self.fc3 = nn.Linear(32, num_classes)
+        self.relu = nn.ReLU()
 
     def forward(self, x):
-        x = self.pool(nn.functional.relu(self.conv1(x)))
-        x = self.pool(nn.functional.relu(self.conv2(x)))
-        x = x.view(x.size(0), -1)
-        x = self.dropout(nn.functional.relu(self.fc1(x)))
-        x = self.fc2(x)
+        x = self.relu(self.fc1(x))
+        x = self.relu(self.fc2(x))
+        x = self.fc3(x)
         return x
 
+
+class EEGDataset(Dataset):
+    def __init__(self, X, y):
+        self.X = X
+        self.y = y
+
+    def __len__(self):
+        return len(self.y)
+
+    def __getitem__(self, idx):
+        return self.X[idx], self.y[idx]
+
+
 class EEGDigitModel:
-    def __init__(self, model_path=None, num_classes=10, device='cpu'):
-        self.device = torch.device(device)
-        self.num_classes = num_classes
+    def __init__(self, input_size=14, num_classes=10, device=None):
+        if device is None:
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            self.device = device
+
+        self.model = EEGNet(input_size, num_classes).to(self.device)
+        self.criterion = nn.CrossEntropyLoss()
+        self.optimizer = optim.Adam(self.model.parameters())
+
         self.eeg_sensors = ['EEG.AF3', 'EEG.F7', 'EEG.F3', 'EEG.FC5', 'EEG.T7', 'EEG.P7', 'EEG.O1',
                             'EEG.O2', 'EEG.P8', 'EEG.T8', 'EEG.FC6', 'EEG.F4', 'EEG.F8', 'EEG.AF4']
-        self.model = None
-        if model_path:
-            self.load_model(model_path)
 
-    def load_model(self, model_path):
-        self.model = EEGCNN(input_shape=(14, 129, 129), num_classes=self.num_classes).to(self.device)
-        self.model.load_state_dict(torch.load(model_path, map_location=self.device))
+        self.cq_columns = ['EEG.RawCq']
+
+        self.mean = None
+        self.std = None
+
+    def preprocess(self, df):
+        # Calculate the percentage of good quality readings for each row
+        df['CQ_percentage'] = df[self.cq_columns].apply(lambda x: (x >= 0.83).mean(), axis=1)
+
+        # Filter the DataFrame to keep only rows with 100% good quality readings
+        high_quality_df = df[df['CQ_percentage'] >= 1]
+
+        # Prepare features (X) and target (y)
+        X = high_quality_df[self.eeg_sensors].values
+        y = high_quality_df['Label'].values
+
+        # Convert to PyTorch tensors
+        X = torch.FloatTensor(X)
+        y = torch.LongTensor(y)
+
+        # Normalize the features
+        if self.mean is None or self.std is None:
+            self.mean = X.mean(dim=0)
+            self.std = X.std(dim=0)
+
+        X = (X - self.mean) / self.std
+
+        return X, y
+
+    def train(self, df, num_epochs=50, batch_size=64):
+        X, y = self.preprocess(df)
+
+        dataset = EEGDataset(X, y)
+        train_size = int(0.8 * len(dataset))
+        test_size = len(dataset) - train_size
+        train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
+
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+
+        for epoch in range(num_epochs):
+            self.model.train()
+            for batch_X, batch_y in train_loader:
+                batch_X, batch_y = batch_X.to(self.device), batch_y.to(self.device)
+                self.optimizer.zero_grad()
+                outputs = self.model(batch_X)
+                loss = self.criterion(outputs, batch_y)
+                loss.backward()
+                self.optimizer.step()
+
+            if (epoch + 1) % 10 == 0:
+                print(f'Epoch [{epoch + 1}/{num_epochs}], Loss: {loss.item():.4f}')
+
+        self.evaluate(test_loader)
+
+    def evaluate(self, test_loader):
         self.model.eval()
-
-    def preprocess(self, x):
-        df = pd.DataFrame(x, columns=self.eeg_sensors)
-        filtered_data = self.apply_filters(df[self.eeg_sensors].values.T)
-        spectrogram = self.create_spectrogram(filtered_data)
-        return torch.FloatTensor(spectrogram).unsqueeze(0)
-
-    def apply_filters(self, eeg_signals, fs=128):
-        lowcut, highcut = 1, 50
-        nyquist = 0.5 * fs
-        b, a = signal.butter(N=4, Wn=[lowcut/nyquist, highcut/nyquist], btype='band')
-        return signal.filtfilt(b, a, eeg_signals)
-
-    def create_spectrogram(self, data, fs=128, nperseg=128, noverlap=64):
-        spectrograms = []
-        for channel_data in data:
-            f, t, Sxx = signal.spectrogram(channel_data, fs, nperseg=nperseg, noverlap=noverlap)
-            spectrograms.append(10 * np.log10(Sxx))
-        return np.array(spectrograms)
-
-    def __call__(self, x):
-        if self.model is None:
-            raise ValueError("Model not loaded. Please load a model using load_model() method.")
-        
-        x_preprocessed = self.preprocess(x)
-        x_preprocessed = x_preprocessed.to(self.device)
-        
+        y_pred = []
+        y_true = []
         with torch.no_grad():
-            outputs = self.model(x_preprocessed)
+            for batch_X, batch_y in test_loader:
+                batch_X = batch_X.to(self.device)
+                outputs = self.model(batch_X)
+                _, predicted = torch.max(outputs.data, 1)
+                y_pred.extend(predicted.cpu().numpy())
+                y_true.extend(batch_y.numpy())
+
+        accuracy = sum(yt == yp for yt, yp in zip(y_true, y_pred)) / len(y_true)
+        print(f"Accuracy: {accuracy:.4f}")
+
+    def predict(self, X):
+        # Ensure X is a DataFrame with the necessary columns
+        if not isinstance(X, pd.DataFrame):
+            raise ValueError("Input must be a pandas DataFrame with the necessary EEG and CQ columns")
+
+        # Apply the same preprocessing as in training
+        X['CQ_percentage'] = X[self.cq_columns].apply(lambda x: (x >= 0.83).mean(), axis=1)
+        high_quality_X = X[X['CQ_percentage'] >= 1]
+
+        if high_quality_X.empty:
+            raise ValueError("No high-quality data points found in the input")
+
+        X_features = high_quality_X[self.eeg_sensors].values
+        X_tensor = torch.FloatTensor(X_features)
+        X_normalized = (X_tensor - self.mean) / self.std
+
+        self.model.eval()
+        with torch.no_grad():
+            X_normalized = X_normalized.to(self.device)
+            outputs = self.model(X_normalized)
             _, predicted = torch.max(outputs.data, 1)
-        
-        return predicted.item()
+        return predicted.cpu().numpy()
+
+    def save_model(self, path):
+        torch.save({
+            'model_state_dict': self.model.state_dict(),
+            'mean': self.mean,
+            'std': self.std
+        }, path)
+
+    def load_model(self, path):
+        checkpoint = torch.load(path, map_location=torch.device('cpu'))
+        self.model.load_state_dict(checkpoint['model_state_dict'])
+        self.mean = checkpoint['mean']
+        self.std = checkpoint['std']
+        self.model.eval()

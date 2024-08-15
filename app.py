@@ -6,6 +6,7 @@ from PIL import Image
 import numpy as np
 from record import Record  # Import the Record class
 import threading
+import re
 from eeg_digit import EEGDigitModel
 
 app = Flask(__name__)
@@ -99,27 +100,55 @@ def current_image():
     current_image_name = f"image_{random_indices[current_index]}"
     return send_file(buf, mimetype='image/png')
 
+
 @app.route('/predict')
 def predict():
     global current_image_name
     # Assuming the recording is saved with the current_image_name
-    recording_path = f'C:/Sankalp/EmotivCortex/recordings/{current_image_name}.csv'
+    recording_path = r'c:/Sankalp/EmotivCortex/recordings/image_12461_EPOC_229198_2024.08.02T11.43.43.07.00.csv'
+    ids = {0: [6094, 45769, 43960], 1: [43948, 64303, 25416], 2: [12461, 67001, 47375],
+       3: [59366, 47356, 7745], 4: [2874, 30708, 12306], 5: [28994, 59956, 14670],
+       6: [48033, 67512, 37990], 7: [45973, 16712, 69543], 8: [3493, 31182, 12928],
+       9: [40341, 35732, 25371]}
     
+    id_to_label = {id_num: label for label, id_list in ids.items() for id_num in id_list}
+
     try:
         # Load the recorded EEG data
-        eeg_data = pd.read_csv(recording_path)
+        # Example usage
+        # Assuming df is your DataFrame with all necessary columns
+        print('making df')
+        first_row = pd.read_csv(recording_path, nrows=1, header=None)
+        id_info = first_row.iloc[0,0]
+
+        match = re.search(r'image_(\d+)', id_info)
+        id_number = int(match.group(1))
+        label = id_to_label.get(id_number, -1)
+        df = pd.read_csv(recording_path, skiprows=1, header=0)  # Load your data here
+        df['Label'] = label
+        print('made df')
+        print(df.columns)
+        print('making model')
+        model = EEGDigitModel()
+        print('made model')
+
+        model.preprocess(df)
+        print(df.columns)
+        print('loading model')
+        model.load_model('eeg_model.pth')
+        print('loaded model')
+
+        print('predicting')
+        predictions = model.predict(df)
+
+        print("Prediction:", predictions[0])
         
-        # Extract the relevant EEG channels
-        eeg_channels = ['EEG.AF3', 'EEG.F7', 'EEG.F3', 'EEG.FC5', 'EEG.T7', 'EEG.P7', 'EEG.O1',
-                        'EEG.O2', 'EEG.P8', 'EEG.T8', 'EEG.FC6', 'EEG.F4', 'EEG.F8', 'EEG.AF4']
-        x = eeg_data[eeg_channels].values
-        
-        # Make prediction
-        prediction = eeg_model(x)
-        
-        return jsonify(success=True, prediction=int(prediction))
+        return jsonify(success=True, prediction=str(predictions[0]))
+
     except Exception as e:
+        print("Failed to gather prediction.")
         return jsonify(success=False, error=str(e))
+
 
 if __name__ == '__main__':
     app.run(debug=True)
