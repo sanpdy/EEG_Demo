@@ -1,0 +1,8 @@
+*.fif
+__pycache__/
+*.py[cod]
+*$py.class
+.DS_Store
+.vscode/
+samples/mnist_train.csv
+samples/mnist_test.csv
