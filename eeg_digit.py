@@ -44,22 +44,38 @@ class EEGDigitModel:
         self.criterion = nn.CrossEntropyLoss()
         self.optimizer = optim.Adam(self.model.parameters())
 
-        self.eeg_sensors = ['EEG.AF3', 'EEG.F7', 'EEG.F3', 'EEG.FC5', 'EEG.T7', 'EEG.P7', 'EEG.O1',
-                            'EEG.O2', 'EEG.P8', 'EEG.T8', 'EEG.FC6', 'EEG.F4', 'EEG.F8', 'EEG.AF4']
+        self.eeg_sensors = [
+            "EEG.AF3",
+            "EEG.F7",
+            "EEG.F3",
+            "EEG.FC5",
+            "EEG.T7",
+            "EEG.P7",
+            "EEG.O1",
+            "EEG.O2",
+            "EEG.P8",
+            "EEG.T8",
+            "EEG.FC6",
+            "EEG.F4",
+            "EEG.F8",
+            "EEG.AF4",
+        ]
 
-        self.cq_columns = ['EEG.RawCq']
+        self.cq_columns = ["EEG.RawCq"]
 
         self.mean = None
         self.std = None
 
     def preprocess(self, df):
         # Calculate the percentage of good quality readings for each row
-        df['CQ_percentage'] = df[self.cq_columns].apply(lambda x: (x >= 0.83).mean(), axis=1)
+        df["CQ_percentage"] = df[self.cq_columns].apply(
+            lambda x: (x >= 0.83).mean(), axis=1
+        )
 
-        high_quality_df = df[df['CQ_percentage'] >= 1]
+        high_quality_df = df[df["CQ_percentage"] >= 1]
 
         X = high_quality_df[self.eeg_sensors].values
-        y = high_quality_df['Label'].values
+        y = high_quality_df["Label"].values
         X = torch.FloatTensor(X)
         y = torch.LongTensor(y)
 
@@ -93,7 +109,7 @@ class EEGDigitModel:
                 self.optimizer.step()
 
             if (epoch + 1) % 10 == 0:
-                print(f'Epoch [{epoch + 1}/{num_epochs}], Loss: {loss.item():.4f}')
+                print(f"Epoch [{epoch + 1}/{num_epochs}], Loss: {loss.item():.4f}")
 
         self.evaluate(test_loader)
 
@@ -114,10 +130,14 @@ class EEGDigitModel:
 
     def predict(self, X):
         if not isinstance(X, pd.DataFrame):
-            raise ValueError("Input must be a pandas DataFrame with the necessary EEG and CQ columns")
+            raise ValueError(
+                "Input must be a pandas DataFrame with the necessary EEG and CQ columns"
+            )
 
-        X['CQ_percentage'] = X[self.cq_columns].apply(lambda x: (x >= 0.83).mean(), axis=1)
-        high_quality_X = X[X['CQ_percentage'] >= 1]
+        X["CQ_percentage"] = X[self.cq_columns].apply(
+            lambda x: (x >= 0.83).mean(), axis=1
+        )
+        high_quality_X = X[X["CQ_percentage"] >= 1]
 
         if high_quality_X.empty:
             raise ValueError("No high-quality data points found in the input")
@@ -134,15 +154,18 @@ class EEGDigitModel:
         return predicted.cpu().numpy()
 
     def save_model(self, path):
-        torch.save({
-            'model_state_dict': self.model.state_dict(),
-            'mean': self.mean,
-            'std': self.std
-        }, path)
+        torch.save(
+            {
+                "model_state_dict": self.model.state_dict(),
+                "mean": self.mean,
+                "std": self.std,
+            },
+            path,
+        )
 
     def load_model(self, path):
-        checkpoint = torch.load(path, map_location=torch.device('cpu'))
-        self.model.load_state_dict(checkpoint['model_state_dict'])
-        self.mean = checkpoint['mean']
-        self.std = checkpoint['std']
+        checkpoint = torch.load(path, map_location=torch.device("cpu"))
+        self.model.load_state_dict(checkpoint["model_state_dict"])
+        self.mean = checkpoint["mean"]
+        self.std = checkpoint["std"]
         self.model.eval()

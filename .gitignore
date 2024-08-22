@@ -4,5 +4,4 @@ __pycache__/
 *$py.class
 .DS_Store
 .vscode/
-samples/mnist_train.csv
-samples/mnist_test.csv
+samples/
